@@ -9,43 +9,65 @@
 <body>
 
 <div id="app">
+
+  <!-- live webcam feed -->
   <video id="webcam" playsinline autoplay muted></video>
+
+  <!-- left code panel -->
+  <div id="codePanel" class="code-panel">
+    <div class="code-header">
+      <span class="dot red"></span>
+      <span class="dot yellow"></span>
+      <span class="dot green"></span>
+      <span class="code-filename">app.js</span>
+    </div>
+    <div class="code-body" id="codeBody"></div>
+  </div>
+
+  <!-- main canvas for visuals + hand skeleton -->
   <canvas id="overlayCanvas"></canvas>
 
+  <!-- top HUD -->
   <div class="hud-top">
     <div class="brand">MAESTER<span>LABS</span></div>
-    <div class="gesture-pill">
+    <div class="gesture-pill" id="gesturePill">
       <span id="gestureIcon">✋</span>
       <span id="gestureLabel">show your hand</span>
     </div>
   </div>
 
+  <!-- slide counter -->
   <div id="slideCounter" class="slide-counter hidden">
-    <span id="slideNum">1</span> / <span id="slideTotal">1</span>
+    <span id="slideNum">1</span> / <span id="slideTotal">6</span>
   </div>
 
-  <div id="loadingOverlay">
-    <div class="loader-text" id="loaderText">loading hand tracking…</div>
-    <div class="loader-bar"><div class="loader-fill"></div></div>
-    <button id="loaderRetry" class="retry-btn hidden">retry</button>
-  </div>
-
+  <!-- rec indicator -->
   <div id="recIndicator" class="rec-indicator hidden">
     <span class="rec-dot"></span> REC
   </div>
 
+  <!-- controls -->
   <div class="controls">
     <button id="recordBtn" class="ctrl-btn" title="Record">⏺</button>
     <button id="fullscreenBtn" class="ctrl-btn" title="Fullscreen">⛶</button>
   </div>
 
+  <!-- gesture guide -->
   <div class="gesture-guide">
-    <div class="g-item"><span class="g-icon">🖐</span> show content</div>
-    <div class="g-item"><span class="g-icon">👊</span> clear</div>
-    <div class="g-item"><span class="g-icon">👈</span> prev</div>
-    <div class="g-item"><span class="g-icon">👉</span> next</div>
-    <div class="g-item"><span class="g-icon">✌️</span> compare</div>
+    <div class="g-item">🖐 show</div>
+    <div class="g-item">👊 clear</div>
+    <div class="g-item">👉 next</div>
+    <div class="g-item">👈 prev</div>
   </div>
+
+  <!-- loading -->
+  <div id="loadingOverlay">
+    <div class="loader-brand">MAESTER<span>LABS</span></div>
+    <div class="loader-text" id="loaderText">loading hand tracking…</div>
+    <div class="loader-bar"><div class="loader-fill"></div></div>
+    <button id="loaderRetry" class="retry-btn hidden">retry</button>
+  </div>
+
 </div>
 
 <script type="module" src="js/app.js"></script>
