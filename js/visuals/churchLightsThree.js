@@ -2,78 +2,129 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 
-// Real pillar x-positions as fraction of plane width (measured from church1.jpg)
+// Real positions as fraction of image (measured from church1.jpg)
 const PILLARS_LEFT  = [0.06, 0.23];
 const PILLARS_RIGHT = [0.94, 0.77];
-const WINDOW_X = 0.51;
-const WINDOW_Y = 0.46;
+const WINDOW_ZONE = { x0: 0.38, x1: 0.64, y0: 0.30, y1: 0.66 };
 
 const COLORS = {
-  yellow: 0xffcc66,
-  purple: 0xa64aff,
-  pink:   0xff4fa8,
-  blue:   0x3fb8ff,
+  yellow: '#ffcc66',
+  purple: '#a64aff',
+  pink:   '#ff4fa8',
+  blue:   '#3fb8ff',
 };
+
+function makeRadialTexture(colorHex, soft = true) {
+  const size = 256;
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+  grad.addColorStop(0, colorHex + 'ff');
+  grad.addColorStop(soft ? 0.35 : 0.6, colorHex + 'aa');
+  grad.addColorStop(1, colorHex + '00');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function makeBeamTexture(colorHex) {
+  const w = 64, h = 256;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createLinearGradient(0, h, 0, 0);
+  grad.addColorStop(0, colorHex + 'ff');
+  grad.addColorStop(0.7, colorHex + '88');
+  grad.addColorStop(1, colorHex + '00');
+  const hgrad = ctx.createLinearGradient(0, 0, w, 0);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+  // horizontal falloff for cylinder look
+  ctx.globalCompositeOperation = 'destination-in';
+  const hg = ctx.createLinearGradient(0, 0, w, 0);
+  hg.addColorStop(0, 'rgba(0,0,0,0)');
+  hg.addColorStop(0.5, 'rgba(0,0,0,1)');
+  hg.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = hg;
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalCompositeOperation = 'source-over';
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
 
 export class ChurchLightsThree {
   constructor(canvas, imageSrc) {
     this.canvas = canvas;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.1;
+    this.renderer.toneMappingExposure = 1.0;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x000000);
 
-    this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-    this.camera.position.set(0, 0, 6);
+    // orthographic camera — pixel-accurate, no perspective distortion
+    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
+    this.camera.position.z = 10;
 
-    // ── background photo plane (darkened church) ──────────────────────────────
+    this.planeW = 2; // world units, matches ortho frustum width baseline
+    this.planeH = 2;
+
+    // ── background photo plane ──────────────────────────────────────────────────
     const loader = new THREE.TextureLoader();
+    this.imgLoaded = false;
     this.bgTexture = loader.load(imageSrc, (tex) => {
       tex.colorSpace = THREE.SRGBColorSpace;
-      this._fitBackgroundPlane();
+      this.imgAspect = tex.image.width / tex.image.height;
+      this.imgLoaded = true;
+      this.resize();
     });
-    this.bgMat = new THREE.MeshBasicMaterial({ map: this.bgTexture, color: 0x1a1a1a }); // darken via tint
-    this.bgGeo = new THREE.PlaneGeometry(10, 10);
+    // moderate darken only — keep the photo readable as a dark church, not crushed black
+    this.bgMat = new THREE.MeshBasicMaterial({ map: this.bgTexture, color: new THREE.Color(0.32, 0.32, 0.32) });
+    this.bgGeo = new THREE.PlaneGeometry(1, 1);
     this.bgPlane = new THREE.Mesh(this.bgGeo, this.bgMat);
-    this.bgPlane.position.z = -2;
+    this.bgPlane.position.z = 0;
     this.scene.add(this.bgPlane);
 
-    // ── ambient fill so the dark church isn't pure black ──────────────────────
-    this.scene.add(new THREE.AmbientLight(0x0a0a0c, 0.6));
+    // light group sits slightly in front of the photo
+    this.lightGroup = new THREE.Group();
+    this.lightGroup.position.z = 0.5;
+    this.scene.add(this.lightGroup);
 
-    // ── volumetric-style fog for depth ─────────────────────────────────────────
-    this.scene.fog = new THREE.FogExp2(0x000000, 0.04);
+    // ── window glow sprite ──────────────────────────────────────────────────────
+    this.windowTex = makeRadialTexture(COLORS.blue);
+    this.windowSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: this.windowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    this.lightGroup.add(this.windowSprite);
 
-    // ── emissive pillar light columns ──────────────────────────────────────────
-    this.pillars = {};
-    this._buildPillars('left', PILLARS_LEFT);
-    this._buildPillars('right', PILLARS_RIGHT);
+    // ── yellow window-beam sprites (left/right) ──────────────────────────────────
+    this.yellowTexBeam = makeBeamTexture(COLORS.yellow);
+    this.yellowLeft = this._makeBeamSprite(this.yellowTexBeam);
+    this.yellowRight = this._makeBeamSprite(this.yellowTexBeam);
+    this.lightGroup.add(this.yellowLeft, this.yellowRight);
 
-    // ── window / center glow ────────────────────────────────────────────────────
-    this._buildWindowGlow();
+    // ── pillar climbing light beams ───────────────────────────────────────────────
+    this.purpleTex = makeBeamTexture(COLORS.purple);
+    this.pinkTex = makeBeamTexture(COLORS.pink);
+    this.pillars = { left: [], right: [] };
+    PILLARS_LEFT.forEach((frac, i) => this.pillars.left.push(this._makePillarSprite(frac, i)));
+    PILLARS_RIGHT.forEach((frac, i) => this.pillars.right.push(this._makePillarSprite(frac, i)));
 
-    // ── point lights for real GI-ish bounce onto the bg plane ─────────────────
-    this.pointLights = {
-      left: new THREE.PointLight(COLORS.yellow, 0, 8, 2),
-      right: new THREE.PointLight(COLORS.yellow, 0, 8, 2),
-      purple: new THREE.PointLight(COLORS.purple, 0, 10, 2),
-      blue: new THREE.PointLight(COLORS.blue, 0, 10, 2),
-    };
-    this.pointLights.left.position.set(-3.2, -1, 1);
-    this.pointLights.right.position.set(3.2, -1, 1);
-    this.pointLights.purple.position.set(0, -1.5, 2);
-    this.pointLights.blue.position.set(0, 0.5, 1.5);
-    Object.values(this.pointLights).forEach(l => this.scene.add(l));
+    // floor pool glow sprites for pillars
+    this.pillarPools = { left: [], right: [] };
+    PILLARS_LEFT.forEach(() => this.pillarPools.left.push(this._makePoolSprite(COLORS.purple)));
+    PILLARS_RIGHT.forEach(() => this.pillarPools.right.push(this._makePoolSprite(COLORS.purple)));
 
-    // ── post-processing: bloom ──────────────────────────────────────────────────
+    // ── post-processing: real bloom ─────────────────────────────────────────────
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 1.4, 0.6, 0.1);
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 1.1, 0.55, 0.15);
     this.composer.addPass(this.bloomPass);
 
     this.state = {
@@ -94,58 +145,38 @@ export class ChurchLightsThree {
     window.addEventListener('resize', () => this.resize());
   }
 
-  _buildPillars(side, fracs) {
-    this.pillars[side] = fracs.map((frac, i) => {
-      const x = (frac - 0.5) * 9.5; // map fraction across plane width
-      const height = 5;
-      const radius = i === 0 ? 0.09 : 0.05;
-      const geo = new THREE.CylinderGeometry(radius, radius, height, 16, 1, true);
-      const mat = new THREE.MeshStandardMaterial({
-        emissive: 0x000000,
-        emissiveIntensity: 0,
-        color: 0x050505,
-        roughness: 0.4,
-        metalness: 0.1,
-        transparent: true,
-        opacity: 0.95,
-      });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(x, -0.2, i === 0 ? 1.2 : 0.2);
-      mesh.scale.y = 0.001; // start invisible (climbing animation)
-      mesh.userData = { baseX: x, baseZ: mesh.position.z, maxHeight: height, delay: i * 0.18 };
-      this.scene.add(mesh);
-      return mesh;
-    });
+  _makeBeamSprite(tex) {
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: tex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    return sprite;
   }
 
-  _buildWindowGlow() {
-    const x = (WINDOW_X - 0.5) * 9.5;
-    const y = (0.5 - WINDOW_Y) * 6;
-    const geo = new THREE.PlaneGeometry(2.4, 3.2);
-    const mat = new THREE.MeshBasicMaterial({
-      color: COLORS.blue,
-      transparent: true,
-      opacity: 0,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    this.windowMesh = new THREE.Mesh(geo, mat);
-    this.windowMesh.position.set(x, y, -0.5);
-    this.scene.add(this.windowMesh);
+  _makePillarSprite(frac, index) {
+    const tex = COLORS.purple; // placeholder, texture assigned in update based on color
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: this.purpleTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    sprite.userData = { frac, delay: index * 0.18, isNear: index === 0 };
+    this.lightGroup.add(sprite);
+    return sprite;
   }
 
-  _fitBackgroundPlane() {
-    const tex = this.bgTexture;
-    if (!tex.image) return;
-    const imgRatio = tex.image.width / tex.image.height;
-    this.bgPlane.scale.set(imgRatio > 1 ? 10 * imgRatio / 10 * 10 / 10 : 10, 10, 1);
-    // simple cover-fit approximation
-    const aspect = this.canvas.clientWidth / this.canvas.clientHeight || 1;
-    if (imgRatio > aspect) {
-      this.bgPlane.scale.set(10 * (imgRatio / aspect), 10, 1);
-    } else {
-      this.bgPlane.scale.set(10, 10 * (aspect / imgRatio), 1);
-    }
+  _makePoolSprite(colorHex) {
+    const tex = makeRadialTexture(colorHex, false);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: tex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    this.lightGroup.add(sprite);
+    return sprite;
+  }
+
+  // convert image-fraction coords to world space, accounting for cover-fit
+  _fracToWorld(fx, fy) {
+    // world space: bgPlane spans [-coverW/2, coverW/2] x [-coverH/2, coverH/2]
+    const x = (fx - 0.5) * this.coverW;
+    const y = (0.5 - fy) * this.coverH;
+    return { x, y };
   }
 
   resize() {
@@ -154,9 +185,60 @@ export class ChurchLightsThree {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(w, h, false);
     this.composer.setSize(w, h);
-    this.camera.aspect = w / h;
+
+    const aspect = w / h;
+    this.camera.left = -aspect; this.camera.right = aspect;
+    this.camera.top = 1; this.camera.bottom = -1;
     this.camera.updateProjectionMatrix();
-    this._fitBackgroundPlane();
+
+    // cover-fit the bg plane to the ortho frustum (width 2*aspect, height 2)
+    const frustumW = aspect * 2, frustumH = 2;
+    const imgAspect = this.imgAspect || 1;
+    if (imgAspect > aspect) {
+      this.coverH = frustumH;
+      this.coverW = frustumH * imgAspect;
+    } else {
+      this.coverW = frustumW;
+      this.coverH = frustumW / imgAspect;
+    }
+    this.bgPlane.scale.set(this.coverW, this.coverH, 1);
+
+    // reposition all light elements based on new cover size
+    this._layoutLights();
+  }
+
+  _layoutLights() {
+    // window glow
+    const wc = this._fracToWorld((WINDOW_ZONE.x0+WINDOW_ZONE.x1)/2, (WINDOW_ZONE.y0+WINDOW_ZONE.y1)/2);
+    const ww = (WINDOW_ZONE.x1 - WINDOW_ZONE.x0) * this.coverW;
+    this.windowSprite.position.set(wc.x, wc.y, 0);
+    this.windowSprite.scale.set(ww*2.4, ww*2.4, 1);
+
+    // yellow beams — positioned over the window, biased left/right
+    const beamW = this.coverW * 0.12;
+    const beamH = this.coverH * 0.65;
+    const leftPos = this._fracToWorld(WINDOW_ZONE.x0 - 0.02, (WINDOW_ZONE.y0+WINDOW_ZONE.y1)/2);
+    const rightPos = this._fracToWorld(WINDOW_ZONE.x1 + 0.02, (WINDOW_ZONE.y0+WINDOW_ZONE.y1)/2);
+    this.yellowLeft.position.set(leftPos.x, leftPos.y - this.coverH*0.05, 0);
+    this.yellowLeft.scale.set(beamW, beamH, 1);
+    this.yellowRight.position.set(rightPos.x, rightPos.y - this.coverH*0.05, 0);
+    this.yellowRight.scale.set(beamW, beamH, 1);
+
+    // pillars
+    ['left','right'].forEach(side => {
+      this.pillars[side].forEach((sprite, i) => {
+        const frac = sprite.userData.frac;
+        const pos = this._fracToWorld(frac, 0.5);
+        const w = this.coverW * (sprite.userData.isNear ? 0.05 : 0.03);
+        sprite.userData.baseX = pos.x;
+        sprite.userData.width = w;
+        sprite.position.x = pos.x;
+
+        const pool = this.pillarPools[side][i];
+        pool.position.set(pos.x, -this.coverH*0.42, 0.1);
+        pool.scale.set(w*6, w*4, 1);
+      });
+    });
   }
 
   update() {
@@ -174,34 +256,38 @@ export class ChurchLightsThree {
     const yellowRightOn = this.state.rightYellow || (this.state.flicker && this.state.flickerOn);
     const yellowLeftOn  = this.state.leftYellow  || (this.state.flicker && this.state.flickerOn);
 
-    this.pointLights.right.intensity = yellowRightOn ? 6 + Math.sin(this.t*8)*0.6 : THREE.MathUtils.lerp(this.pointLights.right.intensity, 0, 0.2);
-    this.pointLights.left.intensity  = yellowLeftOn  ? 6 + Math.sin(this.t*8)*0.6 : THREE.MathUtils.lerp(this.pointLights.left.intensity, 0, 0.2);
+    const flicker = 0.85 + Math.sin(this.t*10)*0.12;
+    this.yellowRight.material.opacity += ((yellowRightOn ? 0.95*flicker : 0) - this.yellowRight.material.opacity) * 0.25;
+    this.yellowLeft.material.opacity  += ((yellowLeftOn  ? 0.95*flicker : 0) - this.yellowLeft.material.opacity) * 0.25;
 
-    // pillar climb animation + emissive intensity
+    // pillar climb
     ['left','right'].forEach(side => {
-      this.pillars[side].forEach((mesh) => {
-        const target = this.state.purpleActive ? 1 : 0;
-        const localT = Math.max(0, Math.min(1, ((this.climbT - mesh.userData.delay) % 1) * 1.4));
-        const targetScale = this.state.purpleActive ? (0.15 + localT * 0.85) : 0.001;
-        mesh.scale.y += (targetScale - mesh.scale.y) * 0.15;
-        mesh.position.y = -0.2 + (mesh.scale.y * mesh.userData.maxHeight)/2 - mesh.userData.maxHeight/2 * 0.001;
+      this.pillars[side].forEach((sprite, i) => {
+        const tex = this.state.purpleColor === 'pink' ? this.pinkTex : this.purpleTex;
+        if (sprite.material.map !== tex) sprite.material.map = tex;
 
-        const colorHex = this.state.purpleColor === 'pink' ? COLORS.pink : COLORS.purple;
-        mesh.material.emissive.setHex(colorHex);
-        mesh.material.emissiveIntensity += ((this.state.purpleActive ? 3.5 : 0) - mesh.material.emissiveIntensity) * 0.2;
-        mesh.material.color.setHex(colorHex);
+        const localT = Math.max(0, Math.min(1, ((this.climbT - sprite.userData.delay) % 1) * 1.4));
+        const target = this.state.purpleActive ? 1 : 0;
+        const targetOpacity = this.state.purpleActive ? 0.95 : 0;
+        sprite.material.opacity += (targetOpacity - sprite.material.opacity) * 0.18;
+
+        const climbHeight = this.coverH * (0.08 + localT * 0.85);
+        const w = sprite.userData.width;
+        sprite.scale.set(w, climbHeight, 1);
+        sprite.position.y = -this.coverH/2 + climbHeight/2;
+
+        const pool = this.pillarPools[side][i];
+        const poolTex = this.state.purpleColor === 'pink' ? COLORS.pink : COLORS.purple;
+        pool.material.opacity += (targetOpacity*0.7 - pool.material.opacity) * 0.18;
       });
     });
 
-    const purpleColorHex = this.state.purpleColor === 'pink' ? COLORS.pink : COLORS.purple;
-    this.pointLights.purple.color.setHex(purpleColorHex);
-    this.pointLights.purple.intensity += ((this.state.purpleActive ? 4 : 0) - this.pointLights.purple.intensity) * 0.15;
-
-    this.pointLights.blue.intensity += ((this.state.blueActive ? 4.5 : 0) - this.pointLights.blue.intensity) * 0.15;
-    this.windowMesh.material.opacity += ((this.state.blueActive ? 0.55 : 0) - this.windowMesh.material.opacity) * 0.15;
-
-    // subtle bg darken tint pulsing slightly for atmosphere
-    this.bgMat.color.setRGB(0.08,0.08,0.08);
+    this.windowSprite.material.opacity += ((this.state.blueActive ? 0.85 : 0) - this.windowSprite.material.opacity) * 0.18;
+    const sc = 1 + Math.sin(this.t*1.5)*0.04;
+    this.windowSprite.scale.set(
+      this.windowSprite.userData?.baseW || this.windowSprite.scale.x,
+      this.windowSprite.userData?.baseH || this.windowSprite.scale.y, 1
+    );
   }
 
   render() {
