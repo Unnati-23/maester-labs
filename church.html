@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Maester Labs — Church Light Show</title>
+<link rel="stylesheet" href="css/styles.css" />
+<link rel="stylesheet" href="css/church.css" />
+</head>
+<body>
+
+<div id="app">
+
+  <!-- top-left: webcam with hand tracking -->
+  <div class="webcam-box">
+    <video id="webcam" playsinline autoplay muted></video>
+    <canvas id="handCanvas"></canvas>
+    <div class="webcam-label">MAESTER<span>LABS</span></div>
+  </div>
+
+  <!-- main: church with light overlay -->
+  <canvas id="churchCanvas"></canvas>
+
+  <!-- gesture status -->
+  <div class="gesture-status">
+    <div class="g-row" id="gRight">RIGHT: <span>—</span></div>
+    <div class="g-row" id="gLeft">LEFT: <span>—</span></div>
+  </div>
+
+  <!-- controls -->
+  <div class="controls">
+    <button id="recordBtn" class="ctrl-btn" title="Record">⏺</button>
+    <button id="fullscreenBtn" class="ctrl-btn" title="Fullscreen">⛶</button>
+  </div>
+
+  <div id="recIndicator" class="rec-indicator hidden">
+    <span class="rec-dot"></span> REC
+  </div>
+
+  <!-- gesture guide -->
+  <div class="gesture-guide">
+    <div class="g-item">☝️ L-shape → yellow window</div>
+    <div class="g-item">🤏 pinch both → flicker</div>
+    <div class="g-item">🖐 right palm → purple climb</div>
+    <div class="g-item">🔄 tilt right → pink</div>
+    <div class="g-item">🖐 left palm → blue glow</div>
+  </div>
+
+  <div id="loadingOverlay">
+    <div class="loader-brand">MAESTER<span>LABS</span></div>
+    <div class="loader-text" id="loaderText">loading hand tracking…</div>
+    <div class="loader-bar"><div class="loader-fill"></div></div>
+    <button id="loaderRetry" class="retry-btn hidden">retry</button>
+  </div>
+
+</div>
+
+<script type="module" src="js/churchApp.js"></script>
+</body>
+</html>

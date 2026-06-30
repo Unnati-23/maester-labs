@@ -94,22 +94,22 @@ function handleGesture(gesture) {
   switch (gesture) {
     case GESTURES.OPEN_PALM:
       visual.show();
-      gestureCooldown = 20;
+      gestureCooldown = 12;
       updateCounter();
       break;
     case GESTURES.FIST:
       visual.hide();
       slideCounter.classList.add('hidden');
-      gestureCooldown = 20;
+      gestureCooldown = 12;
       break;
     case GESTURES.POINT_RIGHT:
       visual.next();
-      gestureCooldown = 25;
+      gestureCooldown = 15;
       updateCounter();
       break;
     case GESTURES.POINT_LEFT:
       visual.prev();
-      gestureCooldown = 25;
+      gestureCooldown = 15;
       updateCounter();
       break;
   }

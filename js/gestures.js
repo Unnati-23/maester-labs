@@ -53,8 +53,8 @@ export function detectGesture(landmarks) {
   // peace / v-sign — index + middle up, ring + pinky down
   if (indexUp && middleUp && !ringUp && !pinkyUp) return GESTURES.PEACE;
 
-  // open palm — all up
-  if (indexUp && middleUp && ringUp && pinkyUp) return GESTURES.OPEN_PALM;
+  // open palm — at least 3 fingers up
+  if ([indexUp, middleUp, ringUp, pinkyUp].filter(Boolean).length >= 3) return GESTURES.OPEN_PALM;
 
   // point left/right — only index up, check direction
   if (indexUp && !middleUp && !ringUp && !pinkyUp) {
@@ -68,7 +68,7 @@ export function detectGesture(landmarks) {
 
 // Smoothing — hold a gesture for N frames before committing
 export class GestureSmoothing {
-  constructor(holdFrames = 8) {
+  constructor(holdFrames = 4) {
     this.holdFrames = holdFrames;
     this.candidate = GESTURES.NONE;
     this.count = 0;
