@@ -1,8 +1,14 @@
 // Church light show — gesture-controlled light overlay on real church photo
+// Positions are mapped to the ACTUAL pillar/window locations in church1.jpg
 const YELLOW = '#ffcc66';
-const PURPLE = '#b14aff';
-const PINK = '#ff5fb8';
-const BLUE = '#4ab8ff';
+const PURPLE = '#a64aff';
+const PINK = '#ff4fa8';
+const BLUE = '#3fb8ff';
+
+// pillar x-positions as fraction of image width (measured from church1.jpg)
+const PILLARS_LEFT  = [0.06, 0.23];   // near edge, second row
+const PILLARS_RIGHT = [0.94, 0.77];   // near edge, second row
+const WINDOW_ZONE = { x0: 0.38, x1: 0.64, y0: 0.30, y1: 0.66 };
 
 export class ChurchLights {
   constructor(imageSrc) {
@@ -26,10 +32,9 @@ export class ChurchLights {
     this.climbT = 0;
   }
 
-  // ── image draw, cover-fit into a region ───────────────────────────────────
   drawBackground(ctx, x, y, w, h) {
     if (!this.loaded) {
-      ctx.fillStyle = '#050504';
+      ctx.fillStyle = '#020201';
       ctx.fillRect(x, y, w, h);
       return;
     }
@@ -47,8 +52,8 @@ export class ChurchLights {
     ctx.beginPath();
     ctx.rect(x, y, w, h);
     ctx.clip();
-    // darken base image so lights pop
-    ctx.filter = 'brightness(0.25) saturate(0.7)';
+    // near-black, just enough structure visible to read as a dark church
+    ctx.filter = 'brightness(0.12) contrast(1.25) saturate(0.5)';
     ctx.drawImage(this.img, dx, dy, dw, dh);
     ctx.filter = 'none';
     ctx.restore();
@@ -58,10 +63,10 @@ export class ChurchLights {
 
   update() {
     this.t += 0.016;
-    this.climbT = (this.climbT + 0.012) % 1;
+    this.climbT = (this.climbT + 0.01) % 1;
     if (this.state.flicker) {
       this.state.flickerT += 0.016;
-      if (this.state.flickerT > 0.18) {
+      if (this.state.flickerT > 0.15) {
         this.state.flickerT = 0;
         this.state.flickerOn = !this.state.flickerOn;
       }
@@ -72,139 +77,171 @@ export class ChurchLights {
     if (!this._region) return;
     const { x, y, w, h } = this._region;
 
-    // ── Yellow window lights (left/right sides) ──────────────────────────────
     const yellowRightOn = this.state.rightYellow || (this.state.flicker && this.state.flickerOn);
     const yellowLeftOn  = this.state.leftYellow  || (this.state.flicker && this.state.flickerOn);
 
-    if (yellowRightOn) this._drawWindowGlow(ctx, x, y, w, h, 'right', YELLOW);
-    if (yellowLeftOn)  this._drawWindowGlow(ctx, x, y, w, h, 'left', YELLOW);
+    if (yellowLeftOn)  this._drawWindowBeam(ctx, x, y, w, h, 'left', YELLOW);
+    if (yellowRightOn) this._drawWindowBeam(ctx, x, y, w, h, 'right', YELLOW);
 
-    // ── Purple/pink climbing pillar lights ────────────────────────────────────
     if (this.state.purpleActive) {
-      this._drawPillarClimb(ctx, x, y, w, h, 'left', this.state.purpleColor);
-      this._drawPillarClimb(ctx, x, y, w, h, 'right', this.state.purpleColor);
+      this._drawPillarLight(ctx, x, y, w, h, 'left', this.state.purpleColor);
+      this._drawPillarLight(ctx, x, y, w, h, 'right', this.state.purpleColor);
     }
 
-    // ── Blue center glow ───────────────────────────────────────────────────────
     if (this.state.blueActive) {
       this._drawCenterGlow(ctx, x, y, w, h);
     }
   }
 
-  // window light glow on left or right third of the image
-  _drawWindowGlow(ctx, x, y, w, h, side, color) {
-    const regionW = w * 0.32;
-    const rx = side === 'left' ? x : x + w - regionW;
-    const flicker = 0.85 + Math.sin(this.t * 8) * 0.08;
-
-    ctx.save();
-    ctx.globalCompositeOperation = 'screen';
-    const grad = ctx.createLinearGradient(rx, y, rx + (side === 'left' ? regionW : -regionW), y);
-    grad.addColorStop(0, `${color}00`);
-    grad.addColorStop(0.5, `${this._hexA(color, 0.35 * flicker)}`);
-    grad.addColorStop(1, `${color}00`);
-    ctx.fillStyle = grad;
-    ctx.fillRect(rx, y, regionW, h);
-
-    // vertical light beams (simulating window rays)
-    const beamCount = 3;
-    for (let i = 0; i < beamCount; i++) {
-      const bx = side === 'left'
-        ? rx + regionW * (0.25 + i * 0.25)
-        : rx + regionW * (0.75 - i * 0.25);
-      const beamGrad = ctx.createLinearGradient(bx, y, bx, y + h);
-      beamGrad.addColorStop(0, this._hexA(color, 0.5 * flicker));
-      beamGrad.addColorStop(0.6, this._hexA(color, 0.15 * flicker));
-      beamGrad.addColorStop(1, `${color}00`);
-      ctx.fillStyle = beamGrad;
-      const beamW = w * 0.05;
-      ctx.beginPath();
-      ctx.moveTo(bx - beamW * 0.3, y);
-      ctx.lineTo(bx + beamW * 0.3, y);
-      ctx.lineTo(bx + beamW, y + h);
-      ctx.lineTo(bx - beamW, y + h);
-      ctx.closePath();
-      ctx.fill();
-    }
-    ctx.restore();
-  }
-
-  // purple/pink ray climbing pillars from bottom to top
-  _drawPillarClimb(ctx, x, y, w, h, side, color) {
-    const pillarXs = side === 'left'
-      ? [x + w * 0.06, x + w * 0.16, x + w * 0.26]
-      : [x + w * 0.94, x + w * 0.84, x + w * 0.74];
+  // ── window light shining through the stained glass, biased to one side ─────
+  _drawWindowBeam(ctx, x, y, w, h, side, color) {
+    const flicker = 0.88 + Math.sin(this.t * 10) * 0.1;
+    const wx0 = x + w * WINDOW_ZONE.x0;
+    const wx1 = x + w * WINDOW_ZONE.x1;
+    const wy0 = y + h * WINDOW_ZONE.y0;
+    const wy1 = y + h * WINDOW_ZONE.y1;
+    const wcx = (wx0 + wx1) / 2;
+    const ww = wx1 - wx0;
 
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
 
-    pillarXs.forEach((px, i) => {
-      const delay = i * 0.15;
-      const localT = Math.max(0, Math.min(1, (this.climbT - delay) * 1.6 % 1));
-      const climbHeight = h * (0.15 + localT * 0.75);
-      const topY = y + h - climbHeight;
-      const pillarW = w * 0.018;
+    // glowing window core
+    const coreGrad = ctx.createRadialGradient(wcx, (wy0+wy1)/2, 0, wcx, (wy0+wy1)/2, ww*1.3);
+    coreGrad.addColorStop(0, this._hexA(color, 0.85 * flicker));
+    coreGrad.addColorStop(0.4, this._hexA(color, 0.4 * flicker));
+    coreGrad.addColorStop(1, `${color}00`);
+    ctx.fillStyle = coreGrad;
+    ctx.fillRect(wx0 - ww*0.5, wy0 - ww*0.3, ww*2, (wy1-wy0) + ww*0.6);
 
-      const grad = ctx.createLinearGradient(px, y + h, px, topY);
-      grad.addColorStop(0, this._hexA(color, 0.9));
-      grad.addColorStop(0.7, this._hexA(color, 0.5));
-      grad.addColorStop(1, `${color}00`);
-
-      ctx.fillStyle = grad;
-      ctx.shadowColor = color;
-      ctx.shadowBlur = 20;
-      ctx.fillRect(px - pillarW/2, topY, pillarW, climbHeight);
-      ctx.shadowBlur = 0;
-    });
-
-    // base glow on floor
-    const floorGrad = ctx.createRadialGradient(
-      side === 'left' ? x + w*0.15 : x + w*0.85, y+h, 0,
-      side === 'left' ? x + w*0.15 : x + w*0.85, y+h, w*0.25
-    );
-    floorGrad.addColorStop(0, this._hexA(color, 0.4));
+    // light spilling onto the floor/aisle on the chosen side
+    const floorX = side === 'left' ? x + w*0.18 : x + w*0.82;
+    const floorGrad = ctx.createRadialGradient(floorX, y+h*0.9, 0, floorX, y+h*0.9, w*0.32);
+    floorGrad.addColorStop(0, this._hexA(color, 0.45 * flicker));
     floorGrad.addColorStop(1, `${color}00`);
     ctx.fillStyle = floorGrad;
-    ctx.fillRect(x, y + h*0.7, w, h*0.3);
+    ctx.fillRect(x, y+h*0.55, w, h*0.45);
+
+    // rim light along the near pillar on that side
+    const pillarX = side === 'left' ? x + w * PILLARS_LEFT[0] : x + w * PILLARS_RIGHT[0];
+    const pGrad = ctx.createLinearGradient(pillarX, y + h*0.3, pillarX, y + h);
+    pGrad.addColorStop(0, `${color}00`);
+    pGrad.addColorStop(0.5, this._hexA(color, 0.3 * flicker));
+    pGrad.addColorStop(1, this._hexA(color, 0.5 * flicker));
+    ctx.fillStyle = pGrad;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 18;
+    ctx.fillRect(pillarX - w*0.012, y + h*0.3, w*0.024, h*0.7);
+    ctx.shadowBlur = 0;
 
     ctx.restore();
   }
 
-  // blue patterned glow in center + floor reflection
-  _drawCenterGlow(ctx, x, y, w, h) {
-    const cx = x + w/2;
-    const cy = y + h * 0.32;
+  // ── light wrapping/climbing a real pillar column, cylinder-shaped glow ─────
+  _drawPillarLight(ctx, x, y, w, h, side, color) {
+    const pillarXs = side === 'left' ? PILLARS_LEFT : PILLARS_RIGHT;
 
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
 
-    // center wall glow
-    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, w*0.35);
-    grad.addColorStop(0, this._hexA(BLUE, 0.55));
-    grad.addColorStop(0.5, this._hexA(BLUE, 0.25));
+    pillarXs.forEach((frac, i) => {
+      const px = x + w * frac;
+      const delay = i * 0.18;
+      const localT = Math.max(0, Math.min(1, ((this.climbT - delay) % 1) * 1.5));
+      const baseY = y + h;
+      const climbHeight = h * (0.1 + localT * 0.8);
+      const topY = baseY - climbHeight;
+
+      // pillar gets narrower with distance (second row = farther = thinner)
+      const pillarW = w * (i === 0 ? 0.038 : 0.022);
+
+      // cylinder shading: bright core + soft falloff on both edges (wrap-around look)
+      const wrapGrad = ctx.createLinearGradient(px - pillarW/2, 0, px + pillarW/2, 0);
+      wrapGrad.addColorStop(0,   `${color}00`);
+      wrapGrad.addColorStop(0.25, this._hexA(color, 0.9));
+      wrapGrad.addColorStop(0.5, this._hexA(color, 1));
+      wrapGrad.addColorStop(0.75, this._hexA(color, 0.9));
+      wrapGrad.addColorStop(1,   `${color}00`);
+
+      // vertical fade (climbing effect, fades at the top)
+      const vertGrad = ctx.createLinearGradient(0, baseY, 0, topY);
+      vertGrad.addColorStop(0, this._hexA(color, 1));
+      vertGrad.addColorStop(0.75, this._hexA(color, 0.7));
+      vertGrad.addColorStop(1, `${color}00`);
+
+      ctx.shadowColor = color;
+      ctx.shadowBlur = w * 0.035;
+
+      // draw column as series of thin horizontal slices so both gradients apply
+      const sliceCount = 28;
+      for (let s = 0; s < sliceCount; s++) {
+        const sy = baseY - (climbHeight * s / sliceCount);
+        const sh = climbHeight / sliceCount + 1;
+        const vAlpha = 1 - (s / sliceCount) * 0.85;
+        ctx.globalAlpha = vAlpha;
+        ctx.fillStyle = wrapGrad;
+        ctx.fillRect(px - pillarW/2, sy - sh, pillarW, sh);
+      }
+      ctx.globalAlpha = 1;
+      ctx.shadowBlur = 0;
+
+      // base pool of light on the floor at the foot of the pillar
+      const poolGrad = ctx.createRadialGradient(px, baseY, 0, px, baseY, pillarW*4);
+      poolGrad.addColorStop(0, this._hexA(color, 0.6));
+      poolGrad.addColorStop(1, `${color}00`);
+      ctx.fillStyle = poolGrad;
+      ctx.fillRect(px - pillarW*4, baseY - pillarW*2, pillarW*8, pillarW*4);
+    });
+
+    ctx.restore();
+  }
+
+  // ── blue/patterned center glow at the stained glass + floor reflection ─────
+  _drawCenterGlow(ctx, x, y, w, h) {
+    const wx0 = x + w * WINDOW_ZONE.x0;
+    const wx1 = x + w * WINDOW_ZONE.x1;
+    const wy0 = y + h * WINDOW_ZONE.y0;
+    const wy1 = y + h * WINDOW_ZONE.y1;
+    const cx = (wx0+wx1)/2;
+    const cy = (wy0+wy1)/2;
+    const cw = wx1 - wx0;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, cw*1.6);
+    grad.addColorStop(0, this._hexA(BLUE, 0.7));
+    grad.addColorStop(0.45, this._hexA(BLUE, 0.3));
     grad.addColorStop(1, `${BLUE}00`);
     ctx.fillStyle = grad;
     ctx.fillRect(x, y, w, h);
 
-    // sparkle pattern
-    for (let i = 0; i < 24; i++) {
-      const angle = (i / 24) * Math.PI * 2 + this.t * 0.4;
-      const r = w * 0.12 * (0.5 + 0.5 * Math.sin(this.t * 2 + i));
+    // sparkle / pattern texture inside the window glow
+    for (let i = 0; i < 30; i++) {
+      const angle = (i / 30) * Math.PI * 2 + this.t * 0.5;
+      const r = cw * 0.55 * (0.4 + 0.5 * Math.abs(Math.sin(this.t * 1.5 + i)));
       const sx = cx + Math.cos(angle) * r;
-      const sy = cy + Math.sin(angle) * r * 0.6;
-      const size = 1.5 + Math.sin(this.t*3+i)*1.2;
+      const sy = cy + Math.sin(angle) * r * 0.9;
+      const size = 1 + Math.sin(this.t*3+i)*1;
       ctx.beginPath();
-      ctx.arc(sx, sy, Math.max(0.5,size), 0, Math.PI*2);
-      ctx.fillStyle = this._hexA(BLUE, 0.7);
+      ctx.arc(sx, sy, Math.max(0.4,size), 0, Math.PI*2);
+      ctx.fillStyle = this._hexA(BLUE, 0.8);
       ctx.fill();
     }
 
-    // floor reflection
-    const floorGrad = ctx.createLinearGradient(cx, y+h*0.7, cx, y+h);
-    floorGrad.addColorStop(0, this._hexA(BLUE, 0.3));
-    floorGrad.addColorStop(1, `${BLUE}00`);
-    ctx.fillStyle = floorGrad;
-    ctx.fillRect(x + w*0.25, y+h*0.7, w*0.5, h*0.3);
+    // long reflection down the center aisle to the floor
+    const aisleGrad = ctx.createLinearGradient(cx, wy1, cx, y+h);
+    aisleGrad.addColorStop(0, this._hexA(BLUE, 0.4));
+    aisleGrad.addColorStop(1, `${BLUE}00`);
+    ctx.fillStyle = aisleGrad;
+    const aisleW0 = w*0.08, aisleW1 = w*0.32;
+    ctx.beginPath();
+    ctx.moveTo(cx - aisleW0, wy1);
+    ctx.lineTo(cx + aisleW0, wy1);
+    ctx.lineTo(cx + aisleW1, y+h);
+    ctx.lineTo(cx - aisleW1, y+h);
+    ctx.closePath();
+    ctx.fill();
 
     ctx.restore();
   }
