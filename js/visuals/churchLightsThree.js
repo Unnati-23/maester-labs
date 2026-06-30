@@ -191,15 +191,17 @@ export class ChurchLightsThree {
     this.camera.top = 1; this.camera.bottom = -1;
     this.camera.updateProjectionMatrix();
 
-    // cover-fit the bg plane to the ortho frustum (width 2*aspect, height 2)
+    // contain-fit the bg plane to the ortho frustum — full image visible, no cropping
     const frustumW = aspect * 2, frustumH = 2;
     const imgAspect = this.imgAspect || 1;
     if (imgAspect > aspect) {
-      this.coverH = frustumH;
-      this.coverW = frustumH * imgAspect;
-    } else {
+      // image wider than screen — fit to width, letterbox top/bottom
       this.coverW = frustumW;
       this.coverH = frustumW / imgAspect;
+    } else {
+      // image taller than screen — fit to height, pillarbox left/right
+      this.coverH = frustumH;
+      this.coverW = frustumH * imgAspect;
     }
     this.bgPlane.scale.set(this.coverW, this.coverH, 1);
 
