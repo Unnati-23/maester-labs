@@ -1,12 +1,11 @@
 import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 import { classifyHand, HandSmoother } from './churchGestures.js';
-import { ChurchLights, PURPLE, PINK } from './visuals/churchLights.js';
+import { ChurchLightsThree } from './visuals/churchLightsThree.js';
 
 const videoEl   = document.getElementById('webcam');
 const handCanvas = document.getElementById('handCanvas');
 const handCtx    = handCanvas.getContext('2d');
 const churchCanvas = document.getElementById('churchCanvas');
-const churchCtx     = churchCanvas.getContext('2d');
 
 const loadingOverlay = document.getElementById('loadingOverlay');
 const loaderText     = document.getElementById('loaderText');
@@ -17,27 +16,21 @@ const recIndicator = document.getElementById('recIndicator');
 const recordBtn     = document.getElementById('recordBtn');
 const fullscreenBtn = document.getElementById('fullscreenBtn');
 
-const lights = new ChurchLights('assets/church/church1.jpg');
+const lights = new ChurchLightsThree(churchCanvas, 'assets/church/church1.jpg');
 
 // ── Per-hand smoothers ────────────────────────────────────────────────────────
 const rightSmoother = new HandSmoother(5);
 const leftSmoother  = new HandSmoother(5);
 
-// pinch-hold tracking for the flicker gesture (needs BOTH hands pinching)
 let rightPinching = false;
 let leftPinching  = false;
 
 // ── Recorder ──────────────────────────────────────────────────────────────────
 const recorder = { instance: null, chunks: [], recording: false };
 
-function captureCombinedStream() {
-  // record the church canvas (main visual) — simplest reliable capture
-  return churchCanvas.captureStream(30);
-}
-
 function startRecording() {
   recorder.chunks = [];
-  const stream = captureCombinedStream();
+  const stream = churchCanvas.captureStream(30);
   recorder.instance = new MediaRecorder(stream, { mimeType: 'video/webm' });
   recorder.instance.ondataavailable = e => { if (e.data.size > 0) recorder.chunks.push(e.data); };
   recorder.instance.onstop = () => {
@@ -96,15 +89,12 @@ function drawHandSkeleton(landmarks, color) {
 // ── Gesture → light state mapping ─────────────────────────────────────────────
 function applyRightHand(gesture, rollDeg) {
   rightPinching = gesture === 'pinch';
-
   lights.state.rightYellow = gesture === 'l_shape';
 
   if (gesture === 'open_palm') {
     lights.state.purpleActive = true;
-    // tilt toward thumb ~30deg shifts color to pink
-    // rollDeg near 0 = flat/horizontal; tilt inward increases magnitude
     const tilted = Math.abs(rollDeg) > 22;
-    lights.state.purpleColor = tilted ? PINK : PURPLE;
+    lights.state.purpleColor = tilted ? 'pink' : 'purple';
   } else {
     lights.state.purpleActive = false;
   }
@@ -115,7 +105,6 @@ function applyRightHand(gesture, rollDeg) {
 
 function applyLeftHand(gesture) {
   leftPinching = gesture === 'pinch';
-
   lights.state.leftYellow = gesture === 'l_shape';
   lights.state.blueActive = gesture === 'open_palm';
 
@@ -137,13 +126,9 @@ let handLandmarker = null;
 function renderLoop() {
   if (videoEl.readyState < 2 || !handLandmarker) { requestAnimationFrame(renderLoop); return; }
 
-  // size canvases
   handCanvas.width = videoEl.videoWidth;
   handCanvas.height = videoEl.videoHeight;
   handCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
-
-  churchCanvas.width = window.innerWidth;
-  churchCanvas.height = window.innerHeight;
 
   const result = handLandmarker.detectForVideo(videoEl, performance.now());
   const hands = result.landmarks || [];
@@ -152,9 +137,8 @@ function renderLoop() {
   let sawRight = false, sawLeft = false;
 
   hands.forEach((lm, i) => {
-    const label = handedness[i]?.[0]?.categoryName; // "Left" or "Right" (un-mirrored model output)
-    // because video is mirrored (scaleX(-1)) for display, the model's "Left" is the user's actual RIGHT hand on screen
-    const isUserRight = label === 'Left';
+    const label = handedness[i]?.[0]?.categoryName;
+    const isUserRight = label === 'Left'; // mirrored display
 
     const { gesture, rollDeg } = classifyHand(lm);
 
@@ -177,8 +161,7 @@ function renderLoop() {
   updateFlicker();
 
   lights.update();
-  lights.drawBackground(churchCtx, 0, 0, churchCanvas.width, churchCanvas.height);
-  lights.drawLights(churchCtx);
+  lights.render();
 
   requestAnimationFrame(renderLoop);
 }
@@ -229,8 +212,7 @@ loaderRetry.addEventListener('click', () => {
 });
 
 window.addEventListener('resize', () => {
-  churchCanvas.width = window.innerWidth;
-  churchCanvas.height = window.innerHeight;
+  lights.resize();
 });
 
 boot();
